@@ -1,0 +1,9 @@
+{
+  "manifest_version":3,
+  "name":"定向投递 · 当前岗位读取",
+  "version":"0.2.1",
+  "description":"从 BOSS 职位搜索页按成功新增数量导入批次，或预览导入单个岗位。",
+  "permissions":["activeTab","scripting","storage"],
+  "host_permissions":["http://127.0.0.1:8765/*"],
+  "action":{"default_popup":"popup.html","default_title":"读取当前岗位"}
+}

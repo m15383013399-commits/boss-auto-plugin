@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {normalizeCapture} from '../extract.mjs';
+const detail={lid:'same',jobInfo:{encryptId:'abc123',jobName:'数据产品经理',locationName:'北京',salaryDesc:'20-30K',postDescription:'负责数据治理、指标体系与产品设计。'.repeat(80)},brandComInfo:{brandName:'测试公司'},bossInfo:{name:'张女士',title:'HR'}};
+const capture={detail,items:[{lid:'same',encryptJobId:'abc123'}],url:'https://www.zhipin.com/web/geek/jobs?securityId=secret'};
+test('preserves complete JD, removes query and credential fields',()=>{const j=normalizeCapture(capture);assert.equal(j.description,detail.jobInfo.postDescription);assert.equal(j.source_url,'https://www.zhipin.com/job_detail/abc123.html');assert.ok(!JSON.stringify(j).includes('secret'));});
+test('wrong lid rejected',()=>assert.throws(()=>normalizeCapture({...capture,detail:{...detail,lid:'other'}}),/一致|关联/));
+test('missing full JD rejected',()=>assert.throws(()=>normalizeCapture({...capture,detail:{...detail,jobInfo:{...detail.jobInfo,postDescription:''}}}),/完整/));
+test('different job id rejected',()=>assert.throws(()=>normalizeCapture({...capture,items:[{lid:'same',encryptJobId:'wrong'}]}),/一致/));
+test('non BOSS url rejected',()=>assert.throws(()=>normalizeCapture({...capture,url:'https://evil.example'}),/BOSS/));
+test('direct detail requires matching URL id',()=>{assert.equal(normalizeCapture({...capture,items:[],url:'https://www.zhipin.com/job_detail/abc123.html'}).job_id,'abc123');assert.throws(()=>normalizeCapture({...capture,items:[],url:'https://www.zhipin.com/job_detail/wrong.html'}),/一致/);});

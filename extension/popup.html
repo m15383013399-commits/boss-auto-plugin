@@ -1,0 +1,6 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>读取当前岗位</title><link rel="stylesheet" href="popup.css"><script type="module" src="popup.js"></script></head><body>
+<h1>读取岗位</h1><p>可导入当前岗位，或在职位搜索页按目标数量批量读取。</p><button id="batch" class="primary">批量导入搜索结果</button>
+<details><summary>连接本机工作台</summary><label>本机连接密钥<input id="key" type="password" autocomplete="off"></label><button id="save">保存密钥</button><p>从工作台「简历与设置」复制。本扩展仅向 127.0.0.1:8765 传送岗位字段。</p></details>
+<button id="read" class="primary">读取当前已加载的 JD</button><p id="status" role="status">读取后可先预览再导入。</p>
+<section id="preview" hidden><h2 id="title"></h2><p id="meta"></p><pre id="jd"></pre><button id="import" class="primary">确认导入本机工作台</button></section>
+<a href="http://127.0.0.1:8765/" target="_blank" rel="noopener">打开工作台 ↗</a><p class="small">批量导入由你开始，可随时暂停；不发送招聘消息。</p></body></html>

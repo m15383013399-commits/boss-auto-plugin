@@ -1,0 +1,22 @@
+# 本机数据、简历和模型凭据
+/data/
+/resumes/
+/uploads/
+.env
+.env.*
+!.env.example
+model.json
+local-key
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.docx
+*.pdf
+
+# 运行及开发缓存
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+.superpowers/
