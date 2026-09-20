@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 from app import evaluation
 
 class EvaluationTests(unittest.TestCase):
@@ -22,8 +23,69 @@ class EvaluationTests(unittest.TestCase):
         r=self.result();r['criteria'].pop()
         with self.assertRaises(ValueError):evaluation.validate_evaluation(r,self.job,self.profile)
     def test_greeting_rejects_unknown_fact(self):
-        self.assertTrue(hasattr(evaluation,'validate_draft'))
-        with self.assertRaises(ValueError):evaluation.validate_draft({'sentences':[{'text':'我有8年经验。','fact_ids':['unknown']}]},self.profile,'brief')
+        proposed=self.draft_of_length(200)
+        proposed['sentences'][0]['fact_ids']=['unknown']
+        with patch('app.evaluation.request_json',return_value=proposed) as request:
+            with self.assertRaisesRegex(ValueError,'不存在的简历事实'):
+                evaluation.compose_greeting({},self.job,self.profile,'brief')
+        self.assertEqual(request.call_count,1)
+    def draft_of_length(self,length,fid='f1'):
+        invitation='希望进一步沟通。'
+        return {'sentences':[{'text':'经'*(length-len(invitation)-1),'fact_ids':[fid]},
+                             {'text':invitation,'fact_ids':[]}]}
+    def test_greeting_length_counts_joined_text_and_reports_limits(self):
+        for style,maximum in [('brief',360),('detailed',850)]:
+            with self.subTest(style=style):
+                for length in (40,maximum):
+                    text,_=evaluation.validate_draft(self.draft_of_length(length),self.profile,style)
+                    self.assertEqual(len(text),length)
+                for length,direction in [(39,'过短'),(maximum+1,'过长')]:
+                    with self.assertRaisesRegex(ValueError,rf'{direction}.*{length}.*40–{maximum}'):
+                        evaluation.validate_draft(self.draft_of_length(length),self.profile,style)
+    def test_length_correction_is_audited_before_returning(self):
+        for style,invalid_length in [('brief',361),('brief',39),('detailed',851)]:
+            with self.subTest(style=style,length=invalid_length):
+                proposed=self.draft_of_length(invalid_length)
+                corrected=self.draft_of_length(200 if style=='brief' else 400)
+                expected='\n'.join(row['text'] for row in corrected['sentences'])
+                with patch('app.evaluation.request_json',side_effect=[proposed,corrected,{'supported':True,'issues':[]}]) as request:
+                    result=evaluation.compose_greeting({},self.job,self.profile,style)
+                self.assertEqual(result['text'],expected)
+                self.assertEqual(result['style'],style)
+                self.assertEqual(result['citations'][0]['facts'][0]['fact_id'],'f1')
+                self.assertEqual(request.call_count,3)
+                rewrite_data=request.call_args_list[1].args[2]
+                self.assertEqual(rewrite_data['previous_draft'],proposed)
+                self.assertIn(str(invalid_length),' '.join(rewrite_data['corrections_required']))
+                self.assertEqual(request.call_args_list[2].args[2]['sentences'],result['citations'])
+    def test_length_correction_cannot_bypass_fact_audit(self):
+        with patch('app.evaluation.request_json',side_effect=[self.draft_of_length(361),self.draft_of_length(200),{'supported':False,'issues':['项目经历没有简历依据']}]) as request:
+            with self.assertRaisesRegex(ValueError,'事实核验未通过'):
+                evaluation.compose_greeting({},self.job,self.profile,'brief')
+        self.assertEqual(request.call_count,3)
+    def test_audit_correction_still_checks_length(self):
+        with patch('app.evaluation.request_json',side_effect=[self.draft_of_length(200),{'supported':False,'issues':['项目经历没有简历依据']},self.draft_of_length(361)]) as request:
+            with self.assertRaisesRegex(ValueError,'过长.*361.*360.*已保留原草稿'):
+                evaluation.compose_greeting({},self.job,self.profile,'brief')
+        self.assertEqual(request.call_count,3)
+    def test_repeated_length_failure_preserves_existing_draft(self):
+        import tempfile
+        from app.store import Store
+        with tempfile.TemporaryDirectory() as d:
+            s=Store(d)
+            try:
+                s.set_profile('工作经验\n负责数据治理平台及SQL产品的需求设计。','test')
+                s.import_jobs([{'title':'产品经理','company':'公司','description':'负责数据治理及指标体系建设，需要SQL数据分析能力，熟悉B端产品设计。'}])
+                jid=s.snapshot()['jobs'][0]['id'];s.save_draft(jid,'原来的招呼内容',True)
+                previous=s.get_job(jid)
+                fid=s.snapshot()['profile']['facts'][0]['id']
+                proposed=self.draft_of_length(361,fid)
+                with patch('app.evaluation.request_json',side_effect=[proposed,proposed]) as request:
+                    with self.assertRaisesRegex(ValueError,'过长.*361.*360.*已保留原草稿'):
+                        s.generate_greeting(jid,'brief')
+                self.assertEqual(request.call_count,2)
+                self.assertEqual(s.get_job(jid),previous)
+            finally:s.close()
     def test_audit_rejection_preserves_existing_draft(self):
         import tempfile
         from unittest.mock import patch

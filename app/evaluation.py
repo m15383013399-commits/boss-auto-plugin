@@ -3,6 +3,10 @@ from .model import request_json
 
 DIMENSIONS={'responsibilities':('核心职责与项目',40),'skills':('必需技能与方法',25),'industry':('行业与项目规模',15),'qualifications':('年限与学历',15),'bonus':('加分项',5)}
 STATUS={'matched':1,'partial':0.5,'unknown':0,'unmet':0}
+DRAFT_LENGTHS={'brief':(40,360),'detailed':(40,850)}
+
+class DraftLengthError(ValueError):
+    """A structurally valid draft needs its length corrected before auditing."""
 
 def validate_evaluation(raw,job,profile):
     criteria=raw.get('criteria')
@@ -63,19 +67,26 @@ def validate_draft(raw,profile,style):
         if not isinstance(text,str) or not text.strip() or not isinstance(ids,list) or any(not isinstance(fid,str) or fid not in facts for fid in ids):raise ValueError('招呼引用了不存在的简历事实')
         texts.append(text.strip());citations.append({'text':text.strip(),'facts':[{'fact_id':fid,'quote':facts[fid]['text'],'section':facts[fid].get('section','简历')} for fid in dict.fromkeys(ids)]})
     text='\n'.join(texts)
-    if not 40<=len(text)<=(360 if style=='brief' else 850):raise ValueError('招呼长度不合适，请重新生成')
     if not any(x['facts'] for x in citations):raise ValueError('招呼没有引用任何简历经历')
+    minimum,maximum=DRAFT_LENGTHS[style]
+    if not minimum<=len(text)<=maximum:
+        direction='过短' if len(text)<minimum else '过长'
+        raise DraftLengthError(f'招呼{direction}：当前 {len(text)} 字符，允许 {minimum}–{maximum} 字符（含标点、空格和换行）')
     return text,citations
 
 def compose_greeting(config,job,profile,style):
     if style not in ('brief','detailed'):raise ValueError('请选择简洁或详细招呼')
+    minimum,maximum=DRAFT_LENGTHS[style]
+    label,target=('简洁','150–250') if style=='brief' else ('详细','300–500')
     instruction=('为求职者写真实、自然的 BOSS 招呼。结构：岗位方向与经历关联、最相关项目与具体能力、简短沟通邀请。'
         '允许概括和改写，不要拼接简历原文、逐条复述 JD、写“我的相关经历：职责：”或空泛恭维。'
         '优先选具体项目与负责事项，省略无关技能。只有简历明确写出的年限、人数、成果、项目名才能使用，不推算不夸大。'
         '项目客户和任职单位必须区分。简历写面向某客户负责项目时，必须写为该客户的项目或面向该客户，不得改为在该客户单位负责工作。例如面向客户公司的项目，不等于在客户公司任职。'
         'JD 是雇主需求，不能转写成候选人的经历。参考语气：您好，我看到这个岗位主要做数据治理平台，和我过往的项目方向比较接近。'
         '按句或段输出，每句包含候选人事实时必须附带支持全部声明的 fact_ids；纯岗位描述和沟通邀请允许空数组。'
-        '简洁版约150–250字；详细版约300–500字，避免重复。返回 {"sentences":[{"text":"自然句子","fact_ids":["事实编号"]}]}。')
+        f'本次只生成{label}版，目标 {target} 字符，硬性范围 {minimum}–{maximum} 字符。'
+        '长度按所有 text 去掉首尾空白后、以一个换行拼接的正文计算，标点、空格、英文字母和换行各计一个字符，JSON 结构和 fact_ids 不计入。'
+        '优先控制在目标范围内，避免重复，保留完整句子。输出2至15个句子或段落。返回 {"sentences":[{"text":"自然句子","fact_ids":["事实编号"]}]}。')
     data={'style':style,'job':{k:job.get(k,'') for k in ('title','company','description')},'resume_facts':profile['facts']}
     audit_instruction=(
         '你是事实审校员，只核验可以客观查证的候选人经历是否有简历依据。输入包含完整简历事实（section 是经历/项目上下文）及逐句引用。'
@@ -86,7 +97,14 @@ def compose_greeting(config,job,profile,style):
         '必须先检查完整简历和section，再判断缺少依据。不要仅因措辞不同或存在细微差异而拒绝。'
         '返回 {"supported":true,"issues":[]}，有具体无依据声明时返回 {"supported":false,"issues":["准确指出哪句哪个事实有问题及简历实际依据"]}。')
     for attempt in range(2):
-        raw=request_json(config,instruction,data);text,citations=validate_draft(raw,profile,style)
+        raw=request_json(config,instruction,data)
+        try:
+            text,citations=validate_draft(raw,profile,style)
+        except DraftLengthError as error:
+            if attempt==1:raise DraftLengthError(str(error)+'；已保留原草稿，请重新生成') from None
+            data={**data,'previous_draft':raw,'corrections_required':[str(error)]}
+            instruction+='上一稿长度不合格。请根据 corrections_required 调整至目标长度：过长时删除次要经历和重复描述，过短时补充相关的真实经历；保留完整句子与事实引用。'
+            continue
         audit=request_json(config,audit_instruction,{'job':data['job'],'resume_facts':profile['facts'],'sentences':citations})
         if audit.get('supported') is True and audit.get('issues')==[]:
             return {'text':text,'citations':citations,'style':style}
